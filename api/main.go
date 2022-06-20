@@ -10,18 +10,19 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
 	// Third party packages
+	"github.com/joho/godotenv"
 	"github.com/julienschmidt/httprouter"
 	"github.com/mssola/user_agent"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/crypto/argon2"
-
-	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 var collection *mongo.Collection
@@ -274,8 +275,12 @@ func analytics(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
 }
 
 func connectDb() *mongo.Collection {
-	uri := 	
-    client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(uri))
+	err := godotenv.Load(".env")
+	if err != nil {
+		log.Fatalf("Error loading .env file")
+	}
+	uri := os.Getenv("MONGO_URL")
+	client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(uri))
 	if err != nil {
 		panic(err)
 	}
