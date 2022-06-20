@@ -1,0 +1,16 @@
+-   Get website source
+-   Device size
+-   Uniqie visitors
+-   Bounce rate
+-   Top pages
+-   Browser
+-   OS
+-   Country
+-   City
+-   Region
+-   Total pageview
+-   Entry pages
+-   Exit pages
+
+-   Get UTM source
+-   Visit duration
