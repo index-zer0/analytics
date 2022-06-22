@@ -14,7 +14,7 @@ export default class MyDocument extends Document {
                     <script
                         defer
                         data-domain="yourdomain.com"
-                        src="http://localhost:8080/"
+                        src={process.env.NEXT_PUBLIC_API_HOST}
                     ></script>
                 </Head>
                 <body>

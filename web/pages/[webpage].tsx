@@ -35,7 +35,6 @@ interface StatisticsType {
 }
 
 const Analytics: NextPage = () => {
-    console.log(`${process.env.NEXT_PUBLIC_API_HOST}/site`);
     const router = useRouter();
     const [statistics, setStatistics] = React.useState<StatisticsType | null>(
         null
