@@ -293,7 +293,7 @@ func main() {
 	if collection == nil {
 		return
 	}
-	myport := strconv.Itoa(3000)
+	myport := strconv.Itoa(8080)
 
 	// Instantiate a new router
 	r := httprouter.New()
