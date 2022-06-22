@@ -35,6 +35,7 @@ interface StatisticsType {
 }
 
 const Analytics: NextPage = () => {
+    console.log(`${process.env.NEXT_PUBLIC_API_HOST}/site`);
     const router = useRouter();
     const [statistics, setStatistics] = React.useState<StatisticsType | null>(
         null
@@ -42,7 +43,7 @@ const Analytics: NextPage = () => {
     const { webpage } = router.query;
     React.useEffect(() => {
         if (webpage !== undefined) {
-            fetch(`http://localhost:8080/site/${webpage}`)
+            fetch(`${process.env.NEXT_PUBLIC_API_HOST}/site/${webpage}`)
                 .then((response) => response.json())
                 .then((data) => setStatistics(data))
                 .catch((err) => console.error(err));

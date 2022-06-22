@@ -303,10 +303,11 @@ func main() {
 
 	r.GET("/site/:webpage", webpageAnalytics)
 
-	l, err := net.Listen("tcp", "localhost:"+myport)
+	l, err := net.Listen("tcp", "0.0.0.0:"+myport)
 	if err != nil {
 		log.Fatal(err)
 	}
+	log.Println("Server started at port:" + myport)
 
 	log.Fatal(http.Serve(l, r))
 }

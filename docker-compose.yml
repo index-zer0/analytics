@@ -1,0 +1,22 @@
+version: "3.8"
+services:
+    api:
+        image: analytics-api:latest
+        build: ./api
+        restart: always
+        ports:
+            - 8080:8080
+        networks:
+            - analytics
+    web:
+        image: analytics-web:latest
+        build: ./web
+        restart: always
+        ports:
+            - 3000:3000
+        networks:
+            - analytics
+        depends_on:
+            - api
+networks:
+    analytics:
