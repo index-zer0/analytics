@@ -7,11 +7,20 @@ import {
     Heading,
     Image,
     Stack,
-    Progress,
     HTMLChakraProps,
+    TabPanels,
+    TabPanel,
+    Button,
+    Modal,
+    ModalOverlay,
+    ModalContent,
+    ModalBody,
+    ModalCloseButton,
+    useDisclosure,
 } from "@chakra-ui/react";
 import { motion } from "framer-motion";
-import { Layout, Map } from "../components";
+import { Layout, Map, Table } from "../components";
+import { isoToName } from "../utils";
 
 interface StatisticsType {
     unique_visitors: number;
@@ -52,6 +61,11 @@ const Analytics: NextPage = () => {
     if (statistics === null) {
         return null;
     }
+    const top_countries: Record<string, number> = {};
+    Object.keys(statistics?.top_countries).forEach(
+        (key) =>
+            (top_countries[isoToName(key)] = statistics?.top_countries[key])
+    );
 
     return (
         <Layout>
@@ -84,7 +98,7 @@ const Analytics: NextPage = () => {
                 <Box
                     w="100%"
                     display={["block", "flex"]}
-                    maxH={400}
+                    maxH={450}
                     mt={["6rem", "2rem"]}
                 >
                     <Table
@@ -100,9 +114,44 @@ const Analytics: NextPage = () => {
                     </Table>
                     <Box w="1rem" h="1rem" />
                     <Table
-                        title="Top pages"
+                        title="World Map"
                         width={["100%", "calc(50% - 0.5rem)"]}
+                        tabs={["Map", "Countries", "Cities"]}
+                        height={450}
                     >
+                        <TabPanels>
+                            <TabPanel>
+                                <Map
+                                    data={statistics?.top_countries}
+                                    total={
+                                        statistics?.unique_visitors -
+                                        statistics?.top_countries["none"]
+                                    }
+                                    width={700}
+                                    height={450}
+                                />
+                            </TabPanel>
+                            <TabPanel>
+                                <Barchart
+                                    left="Country"
+                                    right="Visitors"
+                                    data={top_countries}
+                                    total={statistics?.unique_visitors}
+                                />
+                            </TabPanel>
+                            <TabPanel>
+                                <Barchart
+                                    left="City"
+                                    right="Visitors"
+                                    data={statistics?.top_cities}
+                                    total={statistics?.unique_visitors}
+                                />
+                            </TabPanel>
+                        </TabPanels>
+                    </Table>
+                </Box>
+                <Box w="100%" display={["block", "flex"]} mt="1rem">
+                    <Table title="Top pages" width="100%">
                         <Barchart
                             left="Page"
                             right="Visitors"
@@ -114,7 +163,7 @@ const Analytics: NextPage = () => {
                 <Box w="100%" display={["block", "flex"]} maxH={400} mt="1rem">
                     <Table
                         title="Top Browser"
-                        width={["100%", "calc(50% - 0.5rem)"]}
+                        width={["100%", "calc(33% - 0.5rem)"]}
                     >
                         <Barchart
                             left="Browser"
@@ -126,7 +175,7 @@ const Analytics: NextPage = () => {
                     <Box w="1rem" h="1rem" />
                     <Table
                         title="Top OS"
-                        width={["100%", "calc(50% - 0.5rem)"]}
+                        width={["100%", "calc(33% - 0.5rem)"]}
                     >
                         <Barchart
                             left="Operating system"
@@ -135,32 +184,16 @@ const Analytics: NextPage = () => {
                             total={statistics?.unique_visitors}
                         />
                     </Table>
-                </Box>
-                <Box w="100%" display={["block", "flex"]} maxH={400} mt="1rem">
+                    <Box w="1rem" h="1rem" />
                     <Table
                         title="Screen size"
-                        width={["100%", "calc(50% - 0.5rem)"]}
+                        width={["100%", "calc(33% - 0.5rem)"]}
                     >
                         <Barchart
                             left="Type"
                             right="Visitors"
                             data={statistics?.sizes}
                             total={statistics?.unique_visitors}
-                        />
-                    </Table>
-                    <Box width="1rem" />
-                </Box>
-
-                <Box w="100%" display={["block", "flex"]} mt="1rem">
-                    <Table
-                        title="World Map"
-                        width={["100%", "calc(50% - 0.5rem)"]}
-                    >
-                        <Map
-                            data={statistics?.top_countries}
-                            total={statistics?.unique_visitors}
-                            width={700}
-                            height={500}
                         />
                     </Table>
                 </Box>
@@ -189,8 +222,9 @@ const Card = ({
             borderRadius="1rem"
             p="1rem"
             d="flex"
+            border="1px solid #f2f0f0"
             backgroundImage={background}
-            backgroundPosition="130% 50%"
+            backgroundPosition="-40% 50%"
             backgroundRepeat="no-repeat"
             backgroundSize="50% 130%"
             {...props}
@@ -216,24 +250,6 @@ const Card = ({
     );
 };
 
-interface TableProps extends HTMLChakraProps<"div"> {
-    title: string;
-    children: JSX.Element[] | JSX.Element;
-}
-
-const Table = ({ title, children, ...props }: TableProps): JSX.Element => {
-    return (
-        <Box bg="white" borderRadius="1rem" p="1rem" {...props}>
-            <Box display="flex">
-                <Heading mr="auto" size="sm" fontWeight="semibold">
-                    {title}
-                </Heading>
-            </Box>
-            {children}
-        </Box>
-    );
-};
-
 const Barchart = ({
     left,
     right,
@@ -245,8 +261,11 @@ const Barchart = ({
     data: Record<string, number>;
     total: number;
 }): JSX.Element => {
-    return (
-        <Box mt="0.5rem">
+    const { isOpen, onOpen, onClose } = useDisclosure();
+
+    const visible = 5;
+    const content = (limit: number) => (
+        <>
             <Box display="flex">
                 <Heading mr="auto" size="sm" fontWeight="normal">
                     {left}
@@ -258,11 +277,47 @@ const Barchart = ({
             <Stack>
                 {Object.entries(data)
                     .sort((a, b) => b[1] - a[1])
+                    .slice(0, limit)
                     ?.map(([key, value]) => (
                         <Bar key={key} name={key} value={value} total={total} />
                     ))}
             </Stack>
-        </Box>
+        </>
+    );
+    return (
+        <>
+            <Box mt="0.5rem">
+                {content(visible)}
+                {Object.entries(data).length > visible && (
+                    <Box w="100%" display="flex">
+                        <Button
+                            mt="1rem"
+                            variant="link"
+                            mx="auto"
+                            onClick={onOpen}
+                        >
+                            <Heading size="sm" color="gray">
+                                Show more
+                            </Heading>
+                        </Button>
+                    </Box>
+                )}
+            </Box>
+            <Modal isOpen={isOpen} onClose={onClose}>
+                <ModalOverlay
+                    bg="none"
+                    backdropFilter="auto"
+                    backdropInvert="80%"
+                    backdropBlur="2px"
+                />
+                <ModalContent>
+                    <ModalCloseButton />
+                    <ModalBody py="3rem">
+                        {content(Object.entries(data).length)}
+                    </ModalBody>
+                </ModalContent>
+            </Modal>
+        </>
     );
 };
 
@@ -274,7 +329,13 @@ interface BarProps {
 
 const Bar = ({ name, value, total }: BarProps): JSX.Element => {
     return (
-        <Box width="100%" bg="aliceblue" rounded="0.5rem" position="relative">
+        <Box
+            width="100%"
+            bg="aliceblue"
+            border="1px solid #f2f0f0"
+            rounded="0.5rem"
+            position="relative"
+        >
             <motion.div
                 initial={{ width: "0%" }}
                 animate={{ width: `${(value * 100) / total}%` }}
