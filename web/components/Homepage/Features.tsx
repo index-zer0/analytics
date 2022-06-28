@@ -35,7 +35,10 @@ const Features = ({ features }: { features: FeatureProps[] }) => {
                 {features.map((feature, index) => {
                     return (
                         <Feature
-                            icon={<Icon as={feature.icon} w={10} h={10} />}
+                            key={index}
+                            icon={
+                                <Icon as={feature.icon as any} w={10} h={10} />
+                            }
                             title={feature.title}
                             text={feature.text}
                         />

@@ -21,7 +21,7 @@ const testimonials = [
         name: "Krysta B.",
         role: "Entrepreneur",
         content:
-            "I didn't even need training. We've used EEZY for the last five years. I have gotten at least 50 times the value from EEZY. I made back the purchase price in just 48 hours!",
+            "I didn&apos;t even need training. We&apos;ve used EEZY for the last five years. I have gotten at least 50 times the value from EEZY. I made back the purchase price in just 48 hours!",
         avatar: "https://images.unsplash.com/photo-1598550874175-4d0ef436c909?ixid=MXwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHw%3D&ixlib=rb-1.2.1&auto=format&fit=crop&w=334&q=80",
     },
     {
@@ -151,7 +151,7 @@ const Testimonials = () => {
                     fontWeight={"bold"}
                     color={useColorModeValue("gray.700", "gray.50")}
                 >
-                    You're in good company
+                    You&apos;re in good company
                 </chakra.h1>
                 <chakra.h2
                     margin={"auto"}
@@ -176,7 +176,7 @@ const Testimonials = () => {
                 mx={"auto"}
             >
                 {testimonials.map((cardInfo, index) => (
-                    <TestimonialCard {...cardInfo} index={index} />
+                    <TestimonialCard {...cardInfo} index={index} key={index} />
                 ))}
             </SimpleGrid>
             <Box>
