@@ -1,10 +1,10 @@
 import type { NextPage } from "next";
-import { Box, Text } from "@chakra-ui/react";
+// import { Box, Text } from "@chakra-ui/react";
 import {
     Layout,
     CallToActionWithIllustration,
     Features,
-    Testimonials,
+    Pricing,
 } from "../components";
 import {
     FcBullish,
@@ -54,7 +54,7 @@ const Home: NextPage = () => {
             <CallToActionWithIllustration />
             <Features features={features.slice(0, 3) as any} />
             <Features features={features.slice(3, 6) as any} />
-            <Testimonials />
+            <Pricing />
         </Layout>
     );
 };

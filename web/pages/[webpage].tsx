@@ -110,8 +110,21 @@ const Analytics: NextPage = () => {
                             right="Visitors"
                             data={statistics?.top_sources}
                             total={statistics?.unique_visitors}
+                            transformer={(text: string) => (
+                                <Box display="flex" alignItems="center">
+                                    <Image
+                                        src={`https://t0.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=${text}&size=16`}
+                                        alt="favicon"
+                                        w="16px"
+                                        h="16px"
+                                        mr="0.5rem"
+                                    />
+                                    <Text>{text}</Text>
+                                </Box>
+                            )}
                         />
                     </Table>
+
                     <Box w="1rem" h="1rem" />
                     <Table
                         title="World Map"
@@ -226,14 +239,14 @@ const Card = ({
             backgroundImage={background}
             backgroundPosition="-40% 50%"
             backgroundRepeat="no-repeat"
-            backgroundSize="50% 130%"
+            backgroundSize="60% 200%"
             {...props}
         >
             <Box>
                 <Heading
                     fontWeight="semibold"
                     textTransform="uppercase"
-                    color="darkgray"
+                    // color="darkgray"
                     size="md"
                 >
                     {title}
@@ -255,14 +268,15 @@ const Barchart = ({
     right,
     data,
     total,
+    transformer = (s) => <>{s}</>,
 }: {
     left: string;
     right: string;
     data: Record<string, number>;
     total: number;
+    transformer?: (arg0: string) => JSX.Element;
 }): JSX.Element => {
     const { isOpen, onOpen, onClose } = useDisclosure();
-
     const visible = 5;
     const content = (limit: number) => (
         <>
@@ -279,7 +293,13 @@ const Barchart = ({
                     .sort((a, b) => b[1] - a[1])
                     .slice(0, limit)
                     ?.map(([key, value]) => (
-                        <Bar key={key} name={key} value={value} total={total} />
+                        <Bar
+                            key={key}
+                            name={key}
+                            value={value}
+                            total={total}
+                            transformer={transformer}
+                        />
                     ))}
             </Stack>
         </>
@@ -325,9 +345,15 @@ interface BarProps {
     name: string;
     value: number;
     total: number;
+    transformer: (arg0: string) => JSX.Element;
 }
 
-const Bar = ({ name, value, total }: BarProps): JSX.Element => {
+const Bar = ({
+    name,
+    value,
+    total,
+    transformer = (x) => <>{x}</>,
+}: BarProps): JSX.Element => {
     return (
         <Box
             width="100%"
@@ -341,7 +367,7 @@ const Bar = ({ name, value, total }: BarProps): JSX.Element => {
                 animate={{ width: `${(value * 100) / total}%` }}
                 transition={{ duration: 2 }}
                 style={{
-                    backgroundColor: "#FFE70A",
+                    backgroundColor: "#27dffe",
                     height: "1.5rem",
                     borderRadius: "0.5rem",
                     position: "absolute",
@@ -350,7 +376,7 @@ const Bar = ({ name, value, total }: BarProps): JSX.Element => {
             />
             <Box display="flex" px="0.5rem" h="1.5rem" zIndex={3}>
                 <Text mr="auto" zIndex={3}>
-                    {name}
+                    {transformer(name)}
                 </Text>
                 <Text ml="auto" zIndex={3}>
                     {value}
@@ -359,5 +385,3 @@ const Bar = ({ name, value, total }: BarProps): JSX.Element => {
         </Box>
     );
 };
-
-// https://t0.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://needit.gr&size=16
