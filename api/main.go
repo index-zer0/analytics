@@ -23,8 +23,15 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/crypto/argon2"
+
+	// "firebase.google.com/go/auth"
+	"cloud.google.com/go/firestore"
+	firebase "firebase.google.com/go/v4"
+	"google.golang.org/api/iterator"
+	"google.golang.org/api/option"
 )
 
+var client *firestore.Client
 var collection *mongo.Collection
 var salt []byte = []byte("randomdwadawdawdwad")
 var saltUpdateAt time.Time
@@ -235,12 +242,11 @@ func analytics(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
 
 	sid := generateSessionId(t["h"].(string), ip, userAgent)
 
-	var result bson.M
-	err = collection.FindOne(context.TODO(), bson.D{primitive.E{Key: "id", Value: sid}}).Decode(&result)
-	if err == mongo.ErrNoDocuments {
-		pages_visited := bson.A{}
-		pages_visited = append(pages_visited, t["p"])
-		docs := bson.M{
+	iter := client.Collection("sessions").Where("id", "==", sid).Documents(context.Background())
+	doc, err := iter.Next()
+	if err == iterator.Done {
+		pages_visited := [1]string{t["p"].(string)}
+		docs := map[string]interface{}{
 			"id":              sid,
 			"size":            t["w"],
 			"browser":         name,
@@ -253,19 +259,22 @@ func analytics(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
 			"pages_visited":   pages_visited,
 			"entry_page":      t["p"],
 			"exit_page":       t["p"],
-			"updated_at":      time.Now(),
-			"created_at":      time.Now()}
-		_, err := collection.InsertOne(context.TODO(), docs)
+			"updated_at":      firestore.ServerTimestamp,
+			"created_at":      firestore.ServerTimestamp,
+		}
+		_, _, err := client.Collection("sessions").Add(context.Background(), docs)
 		if err != nil {
 			panic(err)
 		}
 	} else if err == nil {
-		_, err := collection.UpdateOne(context.TODO(),
-			bson.M{"_id": result["_id"]},
-			bson.M{
-				"$push": bson.M{"pages_visited": t["p"]},
-				"$set":  bson.M{"exit_page": t["p"], "updated_at": time.Now()},
-			})
+		pages_visited := append([]interface{}{t["p"]}, doc.Data()["pages_visited"].([]interface{})...)
+		_, err = client.Collection("sessions").Doc(doc.Ref.ID).Set(context.Background(),
+			map[string]interface{}{
+				"pages_visited": pages_visited,
+				"exit_page":     t["p"],
+				"updated_at":    firestore.ServerTimestamp,
+			},
+			firestore.MergeAll)
 		if err != nil {
 			panic(err)
 		}
@@ -289,10 +298,39 @@ func connectDb() *mongo.Collection {
 }
 
 func main() {
-	collection = connectDb()
-	if collection == nil {
-		return
+	opt := option.WithCredentialsFile("./firebaseConfig.json")
+	app, err := firebase.NewApp(context.Background(), nil, opt)
+	if err != nil {
+		fmt.Errorf("error initializing app: %v", err)
 	}
+	/*
+		client, err := app.Auth(context.Background())
+		if err != nil {
+			log.Fatalf("error getting Auth client: %v\n", err)
+		}
+
+		claims := map[string]interface{}{
+			"premiumAccount": true,
+		}
+
+		token, err := client.CustomTokenWithClaims(context.Background(), "some-uid", claims)
+		if err != nil {
+			log.Fatalf("error minting custom token: %v\n", err)
+		}
+
+		log.Printf("Got custom token: %v\n", token)
+	*/
+	client, err = app.Firestore(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	/*
+		    collection = connectDb()
+			if collection == nil {
+				return
+			}
+	*/
 	myport := strconv.Itoa(8080)
 
 	// Instantiate a new router

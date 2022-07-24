@@ -19,7 +19,8 @@
     "react": "18.2.0",
     "react-dom": "18.2.0",
     "react-icons": "^4.4.0",
-    "react-simple-maps": "^2.3.0"
+    "react-simple-maps": "^2.3.0",
+    "stripe": "^9.12.0"
   },
   "devDependencies": {
     "@types/country-list-js": "^3.1.2",
