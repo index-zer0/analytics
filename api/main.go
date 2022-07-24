@@ -202,7 +202,8 @@ func webpageAnalytics(w http.ResponseWriter, req *http.Request, ps httprouter.Pa
 		Top_cities:      getDistinctAndCount("city"),
 		Entry_pages:     getDistinctAndCount("entry_page"),
 		Exit_pages:      getDistinctAndCount("exit_page"),
-		Sizes:           window}
+		Sizes:           window,
+	}
 
 	p, err := json.Marshal(payload)
 	if err != nil {
@@ -245,6 +246,18 @@ func analytics(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
 	iter := client.Collection("sessions").Where("id", "==", sid).Documents(context.Background())
 	doc, err := iter.Next()
 	if err == iterator.Done {
+		if t["r"] == nil {
+			t["r"] = "none"
+		}
+		if geo["city"] == nil {
+			geo["city"] = "none"
+		}
+		if geo["region"] == nil {
+			geo["region"] = "none"
+		}
+		if geo["country"] == nil {
+			geo["country"] = "none"
+		}
 		pages_visited := [1]string{t["p"].(string)}
 		docs := map[string]interface{}{
 			"id":              sid,
@@ -266,6 +279,68 @@ func analytics(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
 		if err != nil {
 			panic(err)
 		}
+		sizes := map[string]interface{}{}
+		if t["w"].(float64) >= 1440 {
+			sizes["desktop"] = firestore.Increment(1)
+		} else if t["w"].(float64) < 1440 && t["w"].(float64) >= 992 {
+			sizes["laptop"] = firestore.Increment(1)
+		} else if t["w"].(float64) < 992 && t["w"].(float64) >= 576 {
+			sizes["tablet"] = firestore.Increment(1)
+		} else {
+			sizes["mobile"] = firestore.Increment(1)
+		}
+		docs = map[string]interface{}{
+			"unique_visitors": firestore.Increment(1),
+			"page_views":      firestore.Increment(1),
+			"bounced":         firestore.Increment(1),
+			"top_sources": map[string]interface{}{
+				t["r"].(string): firestore.Increment(1),
+			},
+			"top_pages": map[string]interface{}{
+				t["p"].(string): firestore.Increment(1),
+			},
+			"top_browsers": map[string]interface{}{
+				name: firestore.Increment(1),
+			},
+
+			"top_oss": map[string]interface{}{
+				ua.OS(): firestore.Increment(1),
+			},
+
+			"top_countries": map[string]interface{}{
+				geo["country"].(string): firestore.Increment(1),
+			},
+
+			"top_regions": map[string]interface{}{
+				geo["region"].(string): firestore.Increment(1),
+			},
+
+			"top_cities": map[string]interface{}{
+				geo["city"].(string): firestore.Increment(1),
+			},
+
+			"entry_pages": map[string]interface{}{
+				t["p"].(string): firestore.Increment(1),
+			},
+
+			"exit_pages": map[string]interface{}{
+				t["p"].(string): firestore.Increment(1),
+			},
+			"sizes":      sizes,
+			"updated_at": firestore.ServerTimestamp,
+			"created_at": firestore.ServerTimestamp,
+		}
+		y, m, d := time.Now().Date()
+		_, err = client.
+			Collection("years").Doc(strconv.Itoa(y)).
+			Collection("months").Doc(strconv.Itoa(int(m))).
+			Collection("dates").Doc(strconv.Itoa(d)).
+			Set(context.Background(), docs,
+				firestore.MergeAll)
+
+		if err != nil {
+			panic(err)
+		}
 	} else if err == nil {
 		pages_visited := append([]interface{}{t["p"]}, doc.Data()["pages_visited"].([]interface{})...)
 		_, err = client.Collection("sessions").Doc(doc.Ref.ID).Set(context.Background(),
@@ -275,6 +350,31 @@ func analytics(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
 				"updated_at":    firestore.ServerTimestamp,
 			},
 			firestore.MergeAll)
+		if err != nil {
+			panic(err)
+		}
+		docs := map[string]interface{}{
+			"page_views": firestore.Increment(1),
+			"top_pages": map[string]interface{}{
+				t["p"].(string): firestore.Increment(1),
+			},
+			"exit_pages": map[string]interface{}{
+				doc.Data()["exit_page"].(string): firestore.Increment(-1),
+				t["p"].(string):                  firestore.Increment(1),
+			},
+			"updated_at": firestore.ServerTimestamp,
+		}
+		if len(pages_visited) == 2 {
+			docs["bounced"] = firestore.Increment(-1)
+		}
+		y, m, d := time.Now().Date()
+		_, err = client.
+			Collection("years").Doc(strconv.Itoa(y)).
+			Collection("months").Doc(strconv.Itoa(int(m))).
+			Collection("dates").Doc(strconv.Itoa(d)).
+			Set(context.Background(), docs,
+				firestore.MergeAll)
+
 		if err != nil {
 			panic(err)
 		}
