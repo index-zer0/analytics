@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -26,7 +27,7 @@ import (
 )
 
 var client *firestore.Client
-var salt []byte = []byte("randomdwadawdawdwad1")
+var salt []byte = []byte("randomdwadawdawdwad3")
 var saltUpdateAt time.Time
 
 type Session struct {
@@ -60,6 +61,26 @@ func generateSalt(n uint32) []byte {
 	return b
 }
 
+func MergeMaps(maps []map[string]interface{}) (result map[string]interface{}) {
+	result = make(map[string]interface{})
+	for _, m := range maps {
+		for k, v := range m {
+			if _, p := result[k]; p {
+				if reflect.ValueOf(result[k]).Kind() == reflect.Map {
+					result[k] = MergeMaps([]map[string]interface{}{result[k].(map[string]interface{}), v.(map[string]interface{})})
+				} else if reflect.ValueOf(result[k]).Kind() == reflect.Int64 {
+					result[k] = result[k].(int64) + v.(int64)
+				} else {
+					continue
+				}
+			} else {
+				result[k] = v
+			}
+		}
+	}
+	return result
+}
+
 func generateSessionId(hostname string, ip string, ua string) []byte {
 	/*if saltUpdateAt.Day() != time.Now().Day() {
 		salt = generateSalt(16)
@@ -75,29 +96,118 @@ func analyticsScript(w http.ResponseWriter, req *http.Request, _ httprouter.Para
 	fmt.Fprintf(w, string(contents))
 }
 
-func webpageAnalytics(w http.ResponseWriter, req *http.Request, ps httprouter.Params) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Content-Type", "application/json")
-
+func AllTime() string {
 	y, m, d := time.Now().Date()
-	doc, err := client.
-		Collection("years").Doc(strconv.Itoa(y)).
-		Collection("months").Doc(strconv.Itoa(int(m))).
-		Collection("dates").Doc(strconv.Itoa(d)).
-		Get(context.Background())
-	if err != nil {
-		panic(err)
+	date := strconv.Itoa(y) + "-"
+	if int(m) < 10 {
+		date = date + "0" + strconv.Itoa(int(m)) + "-"
+	} else {
+		date = date + strconv.Itoa(int(m)) + "-"
 	}
+	if d < 10 {
+		date = date + "0" + strconv.Itoa(d)
+	} else {
+		date = date + strconv.Itoa(d)
+	}
+	date = strconv.Itoa(y) + "-" + strconv.Itoa(int(m)) + "-" + strconv.Itoa(d)
 
-	data := doc.Data()
+	iter := client.
+		Collection("data").
+		Where("date", "<=", date).
+		Documents(context.Background())
+
+	var docs [](map[string]interface{})
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			panic(err)
+		}
+		docs = append(docs, doc.Data())
+	}
+	data := MergeMaps(docs)
+
 	data["bounce_rate"] = float32(data["bounced"].(int64)) / float32(data["unique_visitors"].(int64))
 
 	p, err := json.Marshal(data)
 	if err != nil {
 		panic(err)
 	}
+	return string(p)
+}
 
-	fmt.Fprintf(w, string(p))
+func GetMonth(m string, y string) string {
+	date := y + "-" + m + "-"
+
+	dsnap, err := client.Collection("months").
+		Doc(y + "-" + m).Get(context.Background())
+
+	if err != nil || dsnap == nil {
+		iter := client.
+			Collection("data").
+			Where("date", "<=", date+"31").
+			Where("date", ">=", date+"1").
+			Documents(context.Background())
+
+		var docs [](map[string]interface{})
+		for {
+			doc, err := iter.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				panic(err)
+			}
+			docs = append(docs, doc.Data())
+		}
+		data := MergeMaps(docs)
+
+		if data["bounced"] != nil && data["unique_visitors"] != nil {
+			data["bounce_rate"] = float32(data["bounced"].(int64)) / float32(data["unique_visitors"].(int64))
+		}
+		_, err = client.Collection("months").Doc(y+"-"+m).Set(context.Background(), data)
+		if err != nil {
+			panic(err)
+		}
+		p, err := json.Marshal(data)
+		if err != nil {
+			panic(err)
+		}
+		return string(p)
+	} else {
+		data := dsnap.Data()
+		p, err := json.Marshal(data)
+		if err != nil {
+			panic(err)
+		}
+		return string(p)
+	}
+}
+
+func webpageAnalytics(w http.ResponseWriter, req *http.Request, ps httprouter.Params) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+
+	r := req.URL.Query()
+	query_type := r.Get("type")
+
+	switch query_type {
+	case "month":
+		y, m, _ := time.Now().Date()
+		if _, err := strconv.Atoi(r.Get("m")); err == nil {
+			if _, err := strconv.Atoi(r.Get("y")); err == nil {
+				fmt.Fprintf(w, GetMonth(r.Get("m"), r.Get("y")))
+			} else {
+				fmt.Fprintf(w, GetMonth(r.Get("m"), strconv.Itoa(y)))
+			}
+		} else {
+			fmt.Fprintf(w, GetMonth(strconv.Itoa(int(m)), strconv.Itoa(y)))
+		}
+	default:
+		fmt.Fprintf(w, AllTime())
+	}
 }
 
 func analytics(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
@@ -217,10 +327,22 @@ func analytics(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
 			"created_at": firestore.ServerTimestamp,
 		}
 		y, m, d := time.Now().Date()
+		docs["date"] = strconv.Itoa(y) + "-"
+		if int(m) < 10 {
+			docs["date"] = docs["date"].(string) + "0" + strconv.Itoa(int(m)) + "-"
+		} else {
+			docs["date"] = docs["date"].(string) + strconv.Itoa(int(m)) + "-"
+		}
+		if d < 10 {
+			docs["date"] = docs["date"].(string) + "0" + strconv.Itoa(d)
+		} else {
+			docs["date"] = docs["date"].(string) + strconv.Itoa(d)
+		}
+		docs["date"] = strconv.Itoa(y) + "-" + strconv.Itoa(int(m)) + "-" + strconv.Itoa(d)
+
 		_, err = client.
-			Collection("years").Doc(strconv.Itoa(y)).
-			Collection("months").Doc(strconv.Itoa(int(m))).
-			Collection("dates").Doc(strconv.Itoa(d)).
+			Collection("data").
+			Doc(docs["date"].(string)).
 			Set(context.Background(), docs,
 				firestore.MergeAll)
 
@@ -254,16 +376,29 @@ func analytics(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
 			docs["bounced"] = firestore.Increment(-1)
 		}
 		y, m, d := time.Now().Date()
+		docs["date"] = strconv.Itoa(y) + "-"
+		if int(m) < 10 {
+			docs["date"] = docs["date"].(string) + "0" + strconv.Itoa(int(m)) + "-"
+		} else {
+			docs["date"] = docs["date"].(string) + strconv.Itoa(int(m)) + "-"
+		}
+		if d < 10 {
+			docs["date"] = docs["date"].(string) + "0" + strconv.Itoa(d)
+		} else {
+			docs["date"] = docs["date"].(string) + strconv.Itoa(d)
+		}
+		docs["date"] = strconv.Itoa(y) + "-" + strconv.Itoa(int(m)) + "-" + strconv.Itoa(d)
+
 		_, err = client.
-			Collection("years").Doc(strconv.Itoa(y)).
-			Collection("months").Doc(strconv.Itoa(int(m))).
-			Collection("dates").Doc(strconv.Itoa(d)).
+			Collection("data").
+			Doc(docs["date"].(string)).
 			Set(context.Background(), docs,
 				firestore.MergeAll)
 
 		if err != nil {
 			panic(err)
 		}
+
 	} else {
 		panic(err)
 	}

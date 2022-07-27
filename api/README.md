@@ -14,3 +14,9 @@
 
 -   Get UTM source
 -   Visit duration
+
+---
+
+1 years
+12 months
+12 \* 30 days
