@@ -4,51 +4,84 @@ import (
 	// Standard library packages
 	"context"
 	"crypto/rand"
+	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net"
 	"net/http"
+	"os"
 	"reflect"
 	"strconv"
 	"time"
 
 	// Third party packages
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/joho/godotenv"
 	"github.com/julienschmidt/httprouter"
 	"github.com/mssola/user_agent"
 	"golang.org/x/crypto/argon2"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
 
 	// "firebase.google.com/go/auth"
 	"cloud.google.com/go/firestore"
-	firebase "firebase.google.com/go/v4"
+	_ "firebase.google.com/go/v4"
 	"google.golang.org/api/iterator"
-	"google.golang.org/api/option"
+	_ "google.golang.org/api/option"
 )
 
 var client *firestore.Client
+var db *gorm.DB
 var salt []byte = []byte("randomdwadawdawdwad3")
 var saltUpdateAt time.Time
 
 type Session struct {
-	id string
-
-	new_user bool
-
-	size string
-
-	browser         string
-	browser_version string
-	os              string
-
-	city    string
-	region  string
-	country string
-
-	referrer string
-
-	pages_visited []string
 	// duration?
+	gorm.Model
+	Id             string
+	Size           int
+	Browser        string
+	BrowserVersion string
+	Os             string
+	City           string
+	Region         string
+	Country        string
+	Referrer       string
+	PagesVisited   string
+	EntryPage      string
+	ExitPage       string
+	UpdatedAt      time.Time
+	CreatedAt      time.Time
+}
+
+type TopCount struct {
+	Name  string
+	Count int
+}
+
+type WindowSizes struct {
+	Desktop uint32 `json:"desktop"`
+	Laptop  uint32 `json:"laptop"`
+	Tablet  uint32 `json:"tablet"`
+	Mobile  uint32 `json:"mobile"`
+}
+
+type Payload struct {
+	UniqueVisitors uint32  `json:"unique_visitors"`
+	PageViews      uint32  `json:"page_views"`
+	BounceRate     float32 `json:"bounce_rate"`
+
+	Sizes         WindowSizes    `json:"sizes"`
+	TopBrowsers   map[string]int `json:"top_browsers"`
+	TopOss        map[string]int `json:"top_oss"`
+	TopCities     map[string]int `json:"top_cities"`
+	TopRegions    map[string]int `json:"top_regions"`
+	TopCountries  map[string]int `json:"top_countries"`
+	TopEntryPages map[string]int `json:"entry_pages"`
+	TopExitPages  map[string]int `json:"exit_pages"`
+	// Referrer     map[string]int
 }
 
 func generateSalt(n uint32) []byte {
@@ -81,13 +114,14 @@ func MergeMaps(maps []map[string]interface{}) (result map[string]interface{}) {
 	return result
 }
 
-func generateSessionId(hostname string, ip string, ua string) []byte {
+func generateSessionId(hostname string, ip string, ua string) string {
 	/*if saltUpdateAt.Day() != time.Now().Day() {
 		salt = generateSalt(16)
 		saltUpdateAt = time.Now()
 	}*/
 
-	return argon2.IDKey([]byte(hostname+ip+ua), salt, 3, 1024*64, 2, 32)
+	hash := argon2.IDKey([]byte(hostname+ip+ua), salt, 3, 1024*64, 2, 32)
+	return base64.RawStdEncoding.EncodeToString(hash)
 }
 
 func analyticsScript(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
@@ -97,45 +131,110 @@ func analyticsScript(w http.ResponseWriter, req *http.Request, _ httprouter.Para
 }
 
 func AllTime() string {
-	y, m, d := time.Now().Date()
-	date := strconv.Itoa(y) + "-"
-	if int(m) < 10 {
-		date = date + "0" + strconv.Itoa(int(m)) + "-"
-	} else {
-		date = date + strconv.Itoa(int(m)) + "-"
+	var payload Payload
+	var top_browsers []TopCount
+	payload.TopBrowsers = make(map[string]int)
+	db.Raw("SELECT browser as Name, COUNT(DISTINCT browser) as Count FROM sessions GROUP BY browser").Scan(&top_browsers)
+	for _, browser := range top_browsers {
+		payload.TopBrowsers[browser.Name] = browser.Count
 	}
-	if d < 10 {
-		date = date + "0" + strconv.Itoa(d)
-	} else {
-		date = date + strconv.Itoa(d)
+
+	var top_oss []TopCount
+	payload.TopOss = make(map[string]int)
+	db.Raw("SELECT os as Name, COUNT(DISTINCT os) as Count FROM sessions GROUP BY os").Scan(&top_oss)
+	for _, os := range top_oss {
+		payload.TopOss[os.Name] = os.Count
 	}
-	date = strconv.Itoa(y) + "-" + strconv.Itoa(int(m)) + "-" + strconv.Itoa(d)
 
-	iter := client.
-		Collection("data").
-		Where("date", "<=", date).
-		Documents(context.Background())
-
-	var docs [](map[string]interface{})
-	for {
-		doc, err := iter.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			panic(err)
-		}
-		docs = append(docs, doc.Data())
+	var top_cities []TopCount
+	payload.TopCities = make(map[string]int)
+	db.Raw("SELECT city as Name, COUNT(DISTINCT city) as Count FROM sessions GROUP BY city").Scan(&top_cities)
+	for _, city := range top_cities {
+		payload.TopCities[city.Name] = city.Count
 	}
-	data := MergeMaps(docs)
 
-	data["bounce_rate"] = float32(data["bounced"].(int64)) / float32(data["unique_visitors"].(int64))
+	var top_regions []TopCount
+	payload.TopRegions = make(map[string]int)
+	db.Raw("SELECT region as Name, COUNT(DISTINCT region) as Count FROM sessions GROUP BY region").Scan(&top_regions)
+	for _, region := range top_regions {
+		payload.TopRegions[region.Name] = region.Count
+	}
 
-	p, err := json.Marshal(data)
+	var top_countries []TopCount
+	payload.TopCountries = make(map[string]int)
+	db.Raw("SELECT country as Name, COUNT(DISTINCT country) as Count FROM sessions GROUP BY country").Scan(&top_countries)
+	for _, country := range top_countries {
+		payload.TopCountries[country.Name] = country.Count
+	}
+
+	var top_entry_pages []TopCount
+	payload.TopEntryPages = make(map[string]int)
+	db.Raw("SELECT entry_page as Name, COUNT(DISTINCT entry_page) as Count FROM sessions GROUP BY entry_page").Scan(&top_entry_pages)
+	for _, page := range top_entry_pages {
+		payload.TopEntryPages[page.Name] = page.Count
+	}
+
+	var top_exit_pages []TopCount
+	payload.TopExitPages = make(map[string]int)
+	db.Raw("SELECT exit_page as Name, COUNT(DISTINCT exit_page) as Count FROM sessions GROUP BY exit_page").Scan(&top_exit_pages)
+	for _, page := range top_exit_pages {
+		payload.TopExitPages[page.Name] = page.Count
+	}
+	/*db.Where("created_at <= ?", time.Now()).Find(&sessions)
+	s, err := json.Marshal(sessions)
+	if err != nil {
+		panic(err)
+	}
+	var se []map[string]interface{}
+	json.Unmarshal(s, &se)
+	result := MergeMaps(se)
+	*/
+	p, err := json.Marshal(payload)
 	if err != nil {
 		panic(err)
 	}
 	return string(p)
+	/*
+		y, m, d := time.Now().Date()
+		date := strconv.Itoa(y) + "-"
+		if int(m) < 10 {
+			date = date + "0" + strconv.Itoa(int(m)) + "-"
+		} else {
+			date = date + strconv.Itoa(int(m)) + "-"
+		}
+		if d < 10 {
+			date = date + "0" + strconv.Itoa(d)
+		} else {
+			date = date + strconv.Itoa(d)
+		}
+		date = strconv.Itoa(y) + "-" + strconv.Itoa(int(m)) + "-" + strconv.Itoa(d)
+
+		iter := client.
+			Collection("data").
+			Where("date", "<=", date).
+			Documents(context.Background())
+
+		var docs [](map[string]interface{})
+		for {
+			doc, err := iter.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				panic(err)
+			}
+			docs = append(docs, doc.Data())
+		}
+		data := MergeMaps(docs)
+
+		data["bounce_rate"] = float32(data["bounced"].(int64)) / float32(data["unique_visitors"].(int64))
+
+		p, err := json.Marshal(data)
+		if err != nil {
+			panic(err)
+		}
+		return string(p)
+	*/
 }
 
 func GetMonth(m string, y string) string {
@@ -210,6 +309,13 @@ func webpageAnalytics(w http.ResponseWriter, req *http.Request, ps httprouter.Pa
 	}
 }
 
+func str(s interface{}) string {
+	if s == nil {
+		return ""
+	}
+	return s.(string)
+}
+
 func analytics(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	body, err := ioutil.ReadAll(req.Body)
@@ -239,9 +345,10 @@ func analytics(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
 
 	sid := generateSessionId(t["h"].(string), ip, userAgent)
 
-	iter := client.Collection("sessions").Where("id", "==", sid).Documents(context.Background())
-	doc, err := iter.Next()
-	if err == iterator.Done {
+	var session Session
+	result := db.Take(&session, "id = ?", sid)
+
+	if result.RowsAffected == 0 {
 		if t["r"] == nil {
 			t["r"] = "none"
 		}
@@ -254,183 +361,51 @@ func analytics(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
 		if geo["country"] == nil {
 			geo["country"] = "none"
 		}
-		pages_visited := [1]string{t["p"].(string)}
-		docs := map[string]interface{}{
-			"id":              sid,
-			"size":            t["w"],
-			"browser":         name,
-			"browser_version": version,
-			"os":              ua.OS(),
-			"city":            geo["city"],
-			"region":          geo["region"],
-			"country":         geo["country"],
-			"referrer":        t["r"],
-			"pages_visited":   pages_visited,
-			"entry_page":      t["p"],
-			"exit_page":       t["p"],
-			"updated_at":      firestore.ServerTimestamp,
-			"created_at":      firestore.ServerTimestamp,
-		}
-		_, _, err := client.Collection("sessions").Add(context.Background(), docs)
-		if err != nil {
-			panic(err)
-		}
-		sizes := map[string]interface{}{}
-		if t["w"].(float64) >= 1440 {
-			sizes["desktop"] = firestore.Increment(1)
-		} else if t["w"].(float64) < 1440 && t["w"].(float64) >= 992 {
-			sizes["laptop"] = firestore.Increment(1)
-		} else if t["w"].(float64) < 992 && t["w"].(float64) >= 576 {
-			sizes["tablet"] = firestore.Increment(1)
-		} else {
-			sizes["mobile"] = firestore.Increment(1)
-		}
-		docs = map[string]interface{}{
-			"unique_visitors": firestore.Increment(1),
-			"page_views":      firestore.Increment(1),
-			"bounced":         firestore.Increment(1),
-			"top_sources": map[string]interface{}{
-				t["r"].(string): firestore.Increment(1),
-			},
-			"top_pages": map[string]interface{}{
-				t["p"].(string): firestore.Increment(1),
-			},
-			"top_browsers": map[string]interface{}{
-				name: firestore.Increment(1),
-			},
+		// pages_visited := [1]string{t["p"].(string)}
+		db.Create(&Session{
+			Id:             sid,
+			Size:           int(t["w"].(float64)),
+			Browser:        name,
+			BrowserVersion: version,
+			Os:             ua.OS(),
+			City:           str(geo["city"]),
+			Region:         str(geo["region"]),
+			Country:        str(geo["country"]),
+			Referrer:       str(t["r"]),
+			PagesVisited:   "pages_visited",
+			EntryPage:      str(t["p"]),
+			ExitPage:       str(t["p"]),
+			UpdatedAt:      time.Now(),
+			CreatedAt:      time.Now(),
+		})
 
-			"top_oss": map[string]interface{}{
-				ua.OS(): firestore.Increment(1),
-			},
+	} else if result.RowsAffected > 0 {
+		// pages_visited := append([]interface{}{t["p"]}, doc.Data()["pages_visited"].([]interface{})...)
+		session.PagesVisited = "pages_visited"
+		session.ExitPage = str(t["p"])
+		db.Save(&session)
 
-			"top_countries": map[string]interface{}{
-				geo["country"].(string): firestore.Increment(1),
-			},
-
-			"top_regions": map[string]interface{}{
-				geo["region"].(string): firestore.Increment(1),
-			},
-
-			"top_cities": map[string]interface{}{
-				geo["city"].(string): firestore.Increment(1),
-			},
-
-			"entry_pages": map[string]interface{}{
-				t["p"].(string): firestore.Increment(1),
-			},
-
-			"exit_pages": map[string]interface{}{
-				t["p"].(string): firestore.Increment(1),
-			},
-			"sizes":      sizes,
-			"updated_at": firestore.ServerTimestamp,
-			"created_at": firestore.ServerTimestamp,
-		}
-		y, m, d := time.Now().Date()
-		docs["date"] = strconv.Itoa(y) + "-"
-		if int(m) < 10 {
-			docs["date"] = docs["date"].(string) + "0" + strconv.Itoa(int(m)) + "-"
-		} else {
-			docs["date"] = docs["date"].(string) + strconv.Itoa(int(m)) + "-"
-		}
-		if d < 10 {
-			docs["date"] = docs["date"].(string) + "0" + strconv.Itoa(d)
-		} else {
-			docs["date"] = docs["date"].(string) + strconv.Itoa(d)
-		}
-		docs["date"] = strconv.Itoa(y) + "-" + strconv.Itoa(int(m)) + "-" + strconv.Itoa(d)
-
-		_, err = client.
-			Collection("data").
-			Doc(docs["date"].(string)).
-			Set(context.Background(), docs,
-				firestore.MergeAll)
-
-		if err != nil {
-			panic(err)
-		}
-	} else if err == nil {
-		pages_visited := append([]interface{}{t["p"]}, doc.Data()["pages_visited"].([]interface{})...)
-		_, err = client.Collection("sessions").Doc(doc.Ref.ID).Set(context.Background(),
-			map[string]interface{}{
-				"pages_visited": pages_visited,
-				"exit_page":     t["p"],
-				"updated_at":    firestore.ServerTimestamp,
-			},
-			firestore.MergeAll)
-		if err != nil {
-			panic(err)
-		}
-		docs := map[string]interface{}{
-			"page_views": firestore.Increment(1),
-			"top_pages": map[string]interface{}{
-				t["p"].(string): firestore.Increment(1),
-			},
-			"exit_pages": map[string]interface{}{
-				doc.Data()["exit_page"].(string): firestore.Increment(-1),
-				t["p"].(string):                  firestore.Increment(1),
-			},
-			"updated_at": firestore.ServerTimestamp,
-		}
-		if len(pages_visited) == 2 {
-			docs["bounced"] = firestore.Increment(-1)
-		}
-		y, m, d := time.Now().Date()
-		docs["date"] = strconv.Itoa(y) + "-"
-		if int(m) < 10 {
-			docs["date"] = docs["date"].(string) + "0" + strconv.Itoa(int(m)) + "-"
-		} else {
-			docs["date"] = docs["date"].(string) + strconv.Itoa(int(m)) + "-"
-		}
-		if d < 10 {
-			docs["date"] = docs["date"].(string) + "0" + strconv.Itoa(d)
-		} else {
-			docs["date"] = docs["date"].(string) + strconv.Itoa(d)
-		}
-		docs["date"] = strconv.Itoa(y) + "-" + strconv.Itoa(int(m)) + "-" + strconv.Itoa(d)
-
-		_, err = client.
-			Collection("data").
-			Doc(docs["date"].(string)).
-			Set(context.Background(), docs,
-				firestore.MergeAll)
-
-		if err != nil {
-			panic(err)
-		}
-
-	} else {
-		panic(err)
 	}
 }
 
+func GetDatabase() (*sql.DB, error) {
+	db, err := sql.Open("mysql", os.Getenv("DSN"))
+	return db, err
+}
+
 func main() {
-	opt := option.WithCredentialsFile("./firebaseConfig.json")
-	app, err := firebase.NewApp(context.Background(), nil, opt)
+	err := godotenv.Load()
+
+	db, err = gorm.Open(mysql.Open(os.Getenv("DSN")), &gorm.Config{
+		DisableForeignKeyConstraintWhenMigrating: true,
+	})
+
 	if err != nil {
-		fmt.Errorf("error initializing app: %v", err)
+		panic(err)
 	}
-	/*
-		client, err := app.Auth(context.Background())
-		if err != nil {
-			log.Fatalf("error getting Auth client: %v\n", err)
-		}
 
-		claims := map[string]interface{}{
-			"premiumAccount": true,
-		}
-
-		token, err := client.CustomTokenWithClaims(context.Background(), "some-uid", claims)
-		if err != nil {
-			log.Fatalf("error minting custom token: %v\n", err)
-		}
-
-		log.Printf("Got custom token: %v\n", token)
-	*/
-	client, err = app.Firestore(context.Background())
-	if err != nil {
-		log.Fatal(err)
-	}
+	// db.AutoMigrate(&Session{})
+	// db.Migrator().DropTable(&Session{})
 
 	myport := strconv.Itoa(8080)
 
@@ -443,9 +418,9 @@ func main() {
 
 	l, err := net.Listen("tcp", "0.0.0.0:"+myport)
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
-	log.Println("Server started at port:" + myport)
+	fmt.Println("Server started at port:" + myport)
 
-	log.Fatal(http.Serve(l, r))
+	panic(http.Serve(l, r))
 }
