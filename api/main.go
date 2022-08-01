@@ -2,7 +2,6 @@ package main
 
 import (
 	// Standard library packages
-	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
@@ -12,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"reflect"
 	"strconv"
 	"time"
 
@@ -24,23 +22,43 @@ import (
 	"golang.org/x/crypto/argon2"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
-
-	// "firebase.google.com/go/auth"
-	"cloud.google.com/go/firestore"
-	_ "firebase.google.com/go/v4"
-	"google.golang.org/api/iterator"
-	_ "google.golang.org/api/option"
 )
 
-var client *firestore.Client
 var db *gorm.DB
 var salt []byte = []byte("randomdwadawdawdwad3")
 var saltUpdateAt time.Time
 
+type Page struct {
+	gorm.Model
+	Url       string `gorm:"index:,unique"`
+	CreatedAt time.Time
+}
+
+type SessionPages struct {
+	gorm.Model
+	SessionId string
+	PageUrl   string
+	CreatedAt time.Time
+}
+
+type Entry struct {
+	gorm.Model
+	SessionId string
+	PageUrl   string
+	CreatedAt time.Time
+}
+
+type Exit struct {
+	gorm.Model
+	SessionId string
+	PageUrl   string
+	CreatedAt time.Time
+}
+
 type Session struct {
 	// duration?
 	gorm.Model
-	Id             string
+	Id             string `gorm:"index:,unique"`
 	Size           int
 	Browser        string
 	BrowserVersion string
@@ -49,9 +67,8 @@ type Session struct {
 	Region         string
 	Country        string
 	Referrer       string
-	PagesVisited   string
-	EntryPage      string
-	ExitPage       string
+	EntryPage      Entry `gorm:"foreignKey:SessionId"`
+	ExitPage       Exit  `gorm:"foreignKey:SessionId"`
 	UpdatedAt      time.Time
 	CreatedAt      time.Time
 }
@@ -79,6 +96,7 @@ type Payload struct {
 	TopCities     map[string]int `json:"top_cities"`
 	TopRegions    map[string]int `json:"top_regions"`
 	TopCountries  map[string]int `json:"top_countries"`
+	TopPages      map[string]int `json:"top_pages"`
 	TopEntryPages map[string]int `json:"entry_pages"`
 	TopExitPages  map[string]int `json:"exit_pages"`
 	// Referrer     map[string]int
@@ -92,26 +110,6 @@ func generateSalt(n uint32) []byte {
 	}
 
 	return b
-}
-
-func MergeMaps(maps []map[string]interface{}) (result map[string]interface{}) {
-	result = make(map[string]interface{})
-	for _, m := range maps {
-		for k, v := range m {
-			if _, p := result[k]; p {
-				if reflect.ValueOf(result[k]).Kind() == reflect.Map {
-					result[k] = MergeMaps([]map[string]interface{}{result[k].(map[string]interface{}), v.(map[string]interface{})})
-				} else if reflect.ValueOf(result[k]).Kind() == reflect.Int64 {
-					result[k] = result[k].(int64) + v.(int64)
-				} else {
-					continue
-				}
-			} else {
-				result[k] = v
-			}
-		}
-	}
-	return result
 }
 
 func generateSessionId(hostname string, ip string, ua string) string {
@@ -132,6 +130,12 @@ func analyticsScript(w http.ResponseWriter, req *http.Request, _ httprouter.Para
 
 func AllTime() string {
 	var payload Payload
+
+	var unique_visitors int64
+	//db.Model(&User{}).Where("name = ?", "jinzhu").Count(&count)
+	db.Model(&Session{}).Count(&unique_visitors)
+	payload.UniqueVisitors = uint32(unique_visitors)
+
 	var top_browsers []TopCount
 	payload.TopBrowsers = make(map[string]int)
 	db.Raw("SELECT browser as Name, COUNT(DISTINCT browser) as Count FROM sessions GROUP BY browser").Scan(&top_browsers)
@@ -169,120 +173,41 @@ func AllTime() string {
 
 	var top_entry_pages []TopCount
 	payload.TopEntryPages = make(map[string]int)
-	db.Raw("SELECT entry_page as Name, COUNT(DISTINCT entry_page) as Count FROM sessions GROUP BY entry_page").Scan(&top_entry_pages)
+	db.Raw("SELECT page_url as Name, COUNT(DISTINCT page_url) as Count FROM entries GROUP BY page_url").Scan(&top_entry_pages)
 	for _, page := range top_entry_pages {
 		payload.TopEntryPages[page.Name] = page.Count
 	}
 
 	var top_exit_pages []TopCount
 	payload.TopExitPages = make(map[string]int)
-	db.Raw("SELECT exit_page as Name, COUNT(DISTINCT exit_page) as Count FROM sessions GROUP BY exit_page").Scan(&top_exit_pages)
+	db.Raw("SELECT page_url as Name, COUNT(DISTINCT page_url) as Count FROM exits GROUP BY page_url").Scan(&top_exit_pages)
 	for _, page := range top_exit_pages {
 		payload.TopExitPages[page.Name] = page.Count
 	}
-	/*db.Where("created_at <= ?", time.Now()).Find(&sessions)
-	s, err := json.Marshal(sessions)
-	if err != nil {
-		panic(err)
+
+	var windowSizes WindowSizes
+	db.Raw("SELECT COUNT(Size) as Desktop FROM sessions WHERE Size >= 1440").Scan(&windowSizes.Desktop)
+	db.Raw("SELECT COUNT(Size) as Laptop FROM sessions WHERE Size >= 992 AND Size < 1440").Scan(&windowSizes.Laptop)
+	db.Raw("SELECT COUNT(Size) as Tablet FROM sessions WHERE Size >= 576 AND Size < 992").Scan(&windowSizes.Tablet)
+	db.Raw("SELECT COUNT(Size) as Mobile FROM sessions WHERE Size < 576").Scan(&windowSizes.Mobile)
+	payload.Sizes = windowSizes
+
+	var top_pages []TopCount
+	payload.TopPages = make(map[string]int)
+	db.Raw("SELECT page_url AS Name, COUNT(page_url) AS Count from session_pages group by page_url").Scan(&top_pages)
+	for _, page := range top_pages {
+		payload.TopPages[page.Name] = page.Count
 	}
-	var se []map[string]interface{}
-	json.Unmarshal(s, &se)
-	result := MergeMaps(se)
-	*/
+
+	var didnt_bounce int64
+	db.Raw("SELECT COUNT(*) FROM (SELECT session_id from session_pages group by session_id HAVING COUNT(session_id) > 1) AS q").Count(&didnt_bounce)
+	payload.BounceRate = 1.0 - float32(didnt_bounce)/float32(unique_visitors)
+
 	p, err := json.Marshal(payload)
 	if err != nil {
 		panic(err)
 	}
 	return string(p)
-	/*
-		y, m, d := time.Now().Date()
-		date := strconv.Itoa(y) + "-"
-		if int(m) < 10 {
-			date = date + "0" + strconv.Itoa(int(m)) + "-"
-		} else {
-			date = date + strconv.Itoa(int(m)) + "-"
-		}
-		if d < 10 {
-			date = date + "0" + strconv.Itoa(d)
-		} else {
-			date = date + strconv.Itoa(d)
-		}
-		date = strconv.Itoa(y) + "-" + strconv.Itoa(int(m)) + "-" + strconv.Itoa(d)
-
-		iter := client.
-			Collection("data").
-			Where("date", "<=", date).
-			Documents(context.Background())
-
-		var docs [](map[string]interface{})
-		for {
-			doc, err := iter.Next()
-			if err == iterator.Done {
-				break
-			}
-			if err != nil {
-				panic(err)
-			}
-			docs = append(docs, doc.Data())
-		}
-		data := MergeMaps(docs)
-
-		data["bounce_rate"] = float32(data["bounced"].(int64)) / float32(data["unique_visitors"].(int64))
-
-		p, err := json.Marshal(data)
-		if err != nil {
-			panic(err)
-		}
-		return string(p)
-	*/
-}
-
-func GetMonth(m string, y string) string {
-	date := y + "-" + m + "-"
-
-	dsnap, err := client.Collection("months").
-		Doc(y + "-" + m).Get(context.Background())
-
-	if err != nil || dsnap == nil {
-		iter := client.
-			Collection("data").
-			Where("date", "<=", date+"31").
-			Where("date", ">=", date+"1").
-			Documents(context.Background())
-
-		var docs [](map[string]interface{})
-		for {
-			doc, err := iter.Next()
-			if err == iterator.Done {
-				break
-			}
-			if err != nil {
-				panic(err)
-			}
-			docs = append(docs, doc.Data())
-		}
-		data := MergeMaps(docs)
-
-		if data["bounced"] != nil && data["unique_visitors"] != nil {
-			data["bounce_rate"] = float32(data["bounced"].(int64)) / float32(data["unique_visitors"].(int64))
-		}
-		_, err = client.Collection("months").Doc(y+"-"+m).Set(context.Background(), data)
-		if err != nil {
-			panic(err)
-		}
-		p, err := json.Marshal(data)
-		if err != nil {
-			panic(err)
-		}
-		return string(p)
-	} else {
-		data := dsnap.Data()
-		p, err := json.Marshal(data)
-		if err != nil {
-			panic(err)
-		}
-		return string(p)
-	}
 }
 
 func webpageAnalytics(w http.ResponseWriter, req *http.Request, ps httprouter.Params) {
@@ -294,15 +219,15 @@ func webpageAnalytics(w http.ResponseWriter, req *http.Request, ps httprouter.Pa
 
 	switch query_type {
 	case "month":
-		y, m, _ := time.Now().Date()
+		// y, m, _ := time.Now().Date()
 		if _, err := strconv.Atoi(r.Get("m")); err == nil {
 			if _, err := strconv.Atoi(r.Get("y")); err == nil {
-				fmt.Fprintf(w, GetMonth(r.Get("m"), r.Get("y")))
+				// fmt.Fprintf(w, GetMonth(r.Get("m"), r.Get("y")))
 			} else {
-				fmt.Fprintf(w, GetMonth(r.Get("m"), strconv.Itoa(y)))
+				// fmt.Fprintf(w, GetMonth(r.Get("m"), strconv.Itoa(y)))
 			}
 		} else {
-			fmt.Fprintf(w, GetMonth(strconv.Itoa(int(m)), strconv.Itoa(y)))
+			// fmt.Fprintf(w, GetMonth(strconv.Itoa(int(m)), strconv.Itoa(y)))
 		}
 	default:
 		fmt.Fprintf(w, AllTime())
@@ -311,7 +236,7 @@ func webpageAnalytics(w http.ResponseWriter, req *http.Request, ps httprouter.Pa
 
 func str(s interface{}) string {
 	if s == nil {
-		return ""
+		return "none"
 	}
 	return s.(string)
 }
@@ -349,19 +274,6 @@ func analytics(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
 	result := db.Take(&session, "id = ?", sid)
 
 	if result.RowsAffected == 0 {
-		if t["r"] == nil {
-			t["r"] = "none"
-		}
-		if geo["city"] == nil {
-			geo["city"] = "none"
-		}
-		if geo["region"] == nil {
-			geo["region"] = "none"
-		}
-		if geo["country"] == nil {
-			geo["country"] = "none"
-		}
-		// pages_visited := [1]string{t["p"].(string)}
 		db.Create(&Session{
 			Id:             sid,
 			Size:           int(t["w"].(float64)),
@@ -372,19 +284,25 @@ func analytics(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
 			Region:         str(geo["region"]),
 			Country:        str(geo["country"]),
 			Referrer:       str(t["r"]),
-			PagesVisited:   "pages_visited",
-			EntryPage:      str(t["p"]),
-			ExitPage:       str(t["p"]),
+			EntryPage:      Entry{PageUrl: str(t["p"]), SessionId: sid},
+			ExitPage:       Exit{PageUrl: str(t["p"]), SessionId: sid},
 			UpdatedAt:      time.Now(),
 			CreatedAt:      time.Now(),
 		})
+		db.Create(&SessionPages{
+			SessionId: sid,
+			PageUrl:   str(t["p"]),
+			CreatedAt: time.Now(),
+		})
 
 	} else if result.RowsAffected > 0 {
-		// pages_visited := append([]interface{}{t["p"]}, doc.Data()["pages_visited"].([]interface{})...)
-		session.PagesVisited = "pages_visited"
-		session.ExitPage = str(t["p"])
+		db.Create(&SessionPages{
+			SessionId: sid,
+			PageUrl:   str(t["p"]),
+			CreatedAt: time.Now(),
+		})
+		session.ExitPage = Exit{PageUrl: str(t["p"]), SessionId: sid}
 		db.Save(&session)
-
 	}
 }
 
@@ -403,8 +321,13 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-
-	// db.AutoMigrate(&Session{})
+	/*
+		db.AutoMigrate(&Session{})
+		db.AutoMigrate(&Page{})
+		db.AutoMigrate(&SessionPages{})
+		db.AutoMigrate(&Entry{})
+		db.AutoMigrate(&Exit{})
+	*/
 	// db.Migrator().DropTable(&Session{})
 
 	myport := strconv.Itoa(8080)
