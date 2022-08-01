@@ -99,7 +99,7 @@ type Payload struct {
 	TopPages      map[string]int `json:"top_pages"`
 	TopEntryPages map[string]int `json:"entry_pages"`
 	TopExitPages  map[string]int `json:"exit_pages"`
-	// Referrer     map[string]int
+	TopSources    map[string]int `json:"top_sources"`
 }
 
 func generateSalt(n uint32) []byte {
@@ -202,6 +202,14 @@ func AllTime() string {
 	var didnt_bounce int64
 	db.Raw("SELECT COUNT(*) FROM (SELECT session_id from session_pages group by session_id HAVING COUNT(session_id) > 1) AS q").Count(&didnt_bounce)
 	payload.BounceRate = 1.0 - float32(didnt_bounce)/float32(unique_visitors)
+
+	// top_sources
+	var top_sources []TopCount
+	payload.TopSources = make(map[string]int)
+	db.Raw("SELECT referrer as Name, COUNT(DISTINCT referrer) as Count FROM sessions GROUP BY referrer").Scan(&top_sources)
+	for _, page := range top_sources {
+		payload.TopSources[page.Name] = page.Count
+	}
 
 	p, err := json.Marshal(payload)
 	if err != nil {
