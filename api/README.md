@@ -20,3 +20,5 @@
 1 years
 12 months
 12 \* 30 days
+
+go run entgo.io/ent/cmd/ent init User
