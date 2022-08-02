@@ -3,6 +3,7 @@ package main
 import (
 	// Standard library packages
 	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	// Third party packages
@@ -27,6 +29,14 @@ import (
 var db *gorm.DB
 var salt []byte = []byte("randomdwadawdawdwad3")
 var saltUpdateAt time.Time
+
+type User struct {
+	gorm.Model
+	Email     string `gorm:"unique"`
+	Password  string
+	UpdatedAt time.Time
+	CreatedAt time.Time
+}
 
 type Page struct {
 	gorm.Model
@@ -128,6 +138,102 @@ func analyticsScript(w http.ResponseWriter, req *http.Request, _ httprouter.Para
 	fmt.Fprintf(w, string(contents))
 }
 
+type PasswordConfig struct {
+	time    uint32
+	memory  uint32
+	threads uint8
+	keyLen  uint32
+}
+
+func GeneratePassword(c *PasswordConfig, password string) (string, error) {
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return "", err
+	}
+	hash := argon2.IDKey([]byte(password), salt, c.time, c.memory, c.threads, c.keyLen)
+	b64Salt := base64.RawStdEncoding.EncodeToString(salt)
+	b64Hash := base64.RawStdEncoding.EncodeToString(hash)
+	format := "$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s"
+	full := fmt.Sprintf(format, argon2.Version, c.memory, c.time, c.threads, b64Salt, b64Hash)
+	return full, nil
+}
+
+func ComparePassword(password, hash string) (bool, error) {
+	parts := strings.Split(hash, "$")
+	c := &PasswordConfig{}
+	_, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &c.memory, &c.time, &c.threads)
+	if err != nil {
+		return false, err
+	}
+	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
+	if err != nil {
+		return false, err
+	}
+	decodedHash, err := base64.RawStdEncoding.DecodeString(parts[5])
+	if err != nil {
+		return false, err
+	}
+	c.keyLen = uint32(len(decodedHash))
+	comparisonHash := argon2.IDKey([]byte(password), salt, c.time, c.memory, c.threads, c.keyLen)
+	return (subtle.ConstantTimeCompare(decodedHash, comparisonHash) == 1), nil
+}
+
+func SignUp(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+	body, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		panic(err)
+	}
+	var t map[string]interface{}
+	json.Unmarshal(body, &t)
+
+	var user User
+	result := db.Where("email = ?", t["email"].(string)).First(&user)
+	if result.RowsAffected == 0 {
+		config := &PasswordConfig{
+			time:    1,
+			memory:  64 * 1024,
+			threads: 4,
+			keyLen:  32,
+		}
+		hash, err := GeneratePassword(config, t["password"].(string))
+		if err != nil {
+			panic(err)
+		}
+		db.Create(&User{
+			Email:    t["email"].(string),
+			Password: hash,
+		})
+	} else {
+		fmt.Fprintf(w, "{\"error\":\"Email already in use\"}")
+	}
+}
+
+func Login(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+	body, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		panic(err)
+	}
+	var t map[string]interface{}
+	json.Unmarshal(body, &t)
+
+	var user User
+	result := db.Where("email = ?", t["email"].(string)).First(&user)
+	if result.RowsAffected == 0 {
+		fmt.Fprintf(w, "{\"error\":\"Invalid email or password\"}")
+	} else {
+		match, err := ComparePassword(t["password"].(string), user.Password)
+		if !match || err != nil {
+			fmt.Fprintf(w, "{\"error\":\"Invalid email or password\"}")
+		} else {
+			fmt.Fprintf(w, "{}")
+		}
+	}
+}
+
 func AllTime() string {
 	var payload Payload
 
@@ -210,6 +316,10 @@ func AllTime() string {
 	for _, page := range top_sources {
 		payload.TopSources[page.Name] = page.Count
 	}
+
+	var page_views int64
+	db.Raw("SELECT COUNT(session_id) from session_pages").Count(&page_views)
+	payload.PageViews = uint32(page_views)
 
 	p, err := json.Marshal(payload)
 	if err != nil {
@@ -329,6 +439,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	db.AutoMigrate(&User{})
 	/*
 		db.AutoMigrate(&Session{})
 		db.AutoMigrate(&Page{})
@@ -342,6 +453,8 @@ func main() {
 
 	r := httprouter.New()
 
+	r.POST("/signup", SignUp)
+	r.POST("/login", Login)
 	r.GET("/", analyticsScript)
 	r.POST("/", analytics)
 

@@ -8,13 +8,12 @@ import {
     // @ts-ignore
     useZoomPan,
 } from "react-simple-maps";
-
-const geoUrl =
-    "https://raw.githubusercontent.com/zcreativelabs/react-simple-maps/master/topojson-maps/world-110m.json";
+import getCountryIS02 from "country-iso-3-to-2";
+import { isoToName } from "../utils";
 
 const colorScale = scaleLinear()
     .domain([0, 1])
-    .range(["#ffedea", "#FFE70A"] as any);
+    .range(["#ffedea", "#16c5e5"] as any);
 
 interface MapProps {
     data: Record<string, number>;
@@ -62,10 +61,10 @@ const Map = ({
                 height={height}
             >
                 <Graticule stroke="#F5F4F6" strokeWidth={0.5} />
-                <Geographies geography={geoUrl}>
+                <Geographies geography="/features.json">
                     {({ geographies }) =>
                         geographies.map((geo) => {
-                            const d = data[geo.properties.ISO_A2];
+                            const d = data[getCountryIS02(geo.id)];
                             return (
                                 <Geography
                                     key={geo.rsmKey}

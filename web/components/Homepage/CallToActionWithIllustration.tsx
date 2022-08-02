@@ -25,8 +25,12 @@ const CallToActionWithIllustration = () => {
                     lineHeight={"110%"}
                 >
                     Grow your website and your business{" "}
-                    <Text as={"span"} color={"brand.500"}>
-                        with ____
+                    <Text
+                        as={"span"}
+                        color={"brand.500"}
+                        fontFamily="'Sriracha', cursive"
+                    >
+                        with Index Zero
                     </Text>
                 </Heading>
                 <Text color={"gray.500"} maxW={"3xl"}>

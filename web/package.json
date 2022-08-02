@@ -12,6 +12,8 @@
     "@chakra-ui/react": "^2.2.1",
     "@emotion/react": "^11",
     "@emotion/styled": "^11",
+    "@fontsource/sriracha": "^4.5.8",
+    "country-iso-3-to-2": "^1.1.1",
     "country-list-js": "^3.1.7",
     "d3-scale": "^4.0.2",
     "framer-motion": "^6",
