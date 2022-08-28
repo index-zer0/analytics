@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@chakra-ui/icons": "^2.0.4",
     "@chakra-ui/react": "^2.2.1",
     "@emotion/react": "^11",
     "@emotion/styled": "^11",
@@ -16,6 +17,7 @@
     "country-iso-3-to-2": "^1.1.1",
     "country-list-js": "^3.1.7",
     "d3-scale": "^4.0.2",
+    "formik": "^2.2.9",
     "framer-motion": "^6",
     "next": "12.1.6",
     "react": "18.2.0",
